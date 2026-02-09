@@ -3,7 +3,7 @@ import threading
 from flask import Flask
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
-from google import genai
+import google.generativeai as genai
 
 # --- Веб-сервер для Render ---
 app = Flask(__name__)
@@ -18,26 +18,39 @@ def run_flask():
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 G_KEY = os.getenv("GEMINI_API_KEY")
 
-# Инициализация нового клиента Gemini
-client = genai.Client(api_key=G_KEY)
+# Настраиваем Gemini
+genai.configure(api_key=G_KEY)
+
+# Пробуем использовать модель 1.5-flash
+model = genai.GenerativeModel('gemini-1.5-flash')
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message and update.message.text:
         try:
-            # Новый способ вызова модели
-            response = client.models.generate_content(
-                model="gemini-1.5-flash", 
-                contents=update.message.text
-            )
-            await update.message.reply_text(response.text)
+            # Генерация контента
+            response = model.generate_content(update.message.text)
+            
+            # Проверка, есть ли текст в ответе
+            if response.text:
+                await update.message.reply_text(response.text)
+            else:
+                await update.message.reply_text("ИИ прислал пустой ответ.")
+                
         except Exception as e:
-            print(f"Ошибка Gemini: {e}")
-            await update.message.reply_text(f"Произошла ошибка: {str(e)[:100]}")
+            error_msg = str(e)
+            print(f"!!! ОШИБКА: {error_msg}")
+            
+            # Если это проблема с регионом (РФ), мы это увидим
+            if "User location is not supported" in error_msg:
+                await update.message.reply_text("Ошибка: Google блокирует запросы из этого региона.")
+            else:
+                await update.message.reply_text(f"Произошла ошибка: {error_msg[:100]}")
 
 if __name__ == '__main__':
+    # Запуск "заплатки" для порта
     threading.Thread(target=run_flask, daemon=True).start()
     
-    print("Запуск бота на новом SDK...")
+    print("Бот запускается...")
     application = Application.builder().token(TOKEN).build()
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.run_polling()
