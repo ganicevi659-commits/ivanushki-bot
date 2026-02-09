@@ -1,2 +1,2 @@
-python-telegram-bot==21.5        # стабильная версия на 2025–2026
-google-generativeai==0.8.*       # или просто google-generativeai
+python-telegram-bot==22.*
+google-genai==1.*
