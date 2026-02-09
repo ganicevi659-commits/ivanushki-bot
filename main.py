@@ -1,4 +1,4 @@
-mport os
+import os
 import asyncio
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
@@ -21,7 +21,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Ошибка: {e}")
 
 # Запуск бота
-if name == '__main__':
+if __name__ == '__main__':
     print("Бот запущен...")
     application = Application.builder().token("8250295875:AAFAaOwraBoPYG9n-YUzKUUs0E8hYdVUltA").build()
     
