@@ -1,2 +1,4 @@
 python-telegram-bot==22.*
 google-genai==1.*
+fastapi==0.115.*
+uvicorn==0.32.*
