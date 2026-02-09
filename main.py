@@ -38,6 +38,6 @@ async def chat(msg: types.Message):
     )
     await msg.answer(response.text)
 
-if _ _name_ _ == "_ _main_ _":
+if __name__ == "__main__":
     dp.run_polling(bot)
 
