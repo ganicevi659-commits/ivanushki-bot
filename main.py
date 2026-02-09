@@ -1,15 +1,17 @@
 import os
+from io import BytesIO
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ContentType
-import google.genai as genai
+from aiogram import executor
 from pptx import Presentation
-from io import BytesIO
 from PIL import Image
 import pytesseract
+import google.genai as genai
+import feedparser  # Для новостей СПб
 
-# -------------------------
-# Переменные окружения
-# -------------------------
+# ===============================
+# Настройки и ключи
+# ===============================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
@@ -17,33 +19,30 @@ if not BOT_TOKEN or not GEMINI_API_KEY:
     print("❌ BOT_TOKEN или GEMINI_API_KEY не заданы!")
     exit(1)
 
-# -------------------------
-# Настройка модели
-# -------------------------
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-1.5-flash")
 
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(bot)
 
-# -------------------------
+# ===============================
 # Клавиатура
-# -------------------------
+# ===============================
 keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="Помощь ИИ")],
         [KeyboardButton(text="Подбор фильмов"), KeyboardButton(text="Задачи по судостроению")],
         [KeyboardButton(text="Презентации"), KeyboardButton(text="Сокращение текстов / Тексты")],
-        [KeyboardButton(text="Примеры / Фото"), KeyboardButton(text="Контрольная / Фото")]
+        [KeyboardButton(text="Примеры / Фото"), KeyboardButton(text="Контрольная / Фото")],
+        [KeyboardButton(text="Новости СПб")]
     ],
     resize_keyboard=True
 )
 
-# -------------------------
-# Функции категорий
-# -------------------------
+# ===============================
+# Вспомогательные функции ИИ
+# ===============================
 def generate_ai_response(prompt: str) -> str:
-    """Главная функция ИИ для любых текстовых запросов"""
     try:
         response = model.generate_content(f"Отвечай на русском языке:\n{prompt}")
         return response.text
@@ -51,23 +50,20 @@ def generate_ai_response(prompt: str) -> str:
         return f"❌ Ошибка при генерации ответа: {e}"
 
 def recommend_movies(prompt: str) -> str:
-    """ИИ рекомендует топ фильмов по запросу"""
     return generate_ai_response(f"Предложи топ фильмов. Запрос: {prompt}")
 
 def solve_shipbuilding_task(task_text: str) -> str:
-    """Решение задач по судостроению"""
     return generate_ai_response(f"Реши задачу по судостроению:\n{task_text}")
 
 def make_presentation(topic: str) -> BytesIO:
-    """Создаёт PPTX файл по теме через ИИ"""
-    prompt = f"Сделай готовую презентацию по теме: {topic}. Напиши заголовки слайдов и текст каждого слайда."
+    prompt = f"Сделай готовую презентацию по теме: {topic}. Заголовки слайдов и текст."
     slides_text = generate_ai_response(prompt)
     
     prs = Presentation()
     for slide_info in slides_text.split("\n\n"):
         if not slide_info.strip():
             continue
-        slide = prs.slides.add_slide(prs.slide_layouts[1])  # Title + Content
+        slide = prs.slides.add_slide(prs.slide_layouts[1])
         lines = slide_info.split("\n", 1)
         slide.shapes.title.text = lines[0].strip()
         if len(lines) > 1:
@@ -78,11 +74,9 @@ def make_presentation(topic: str) -> BytesIO:
     return pptx_file
 
 def summarize_text(text: str) -> str:
-    """Сокращение или исправление текста"""
     return generate_ai_response(f"Сократи или перепиши текст:\n{text}")
 
 def handle_photo(file_bytes: bytes) -> str:
-    """Распознаём текст с фото и отвечаем через ИИ"""
     try:
         img = Image.open(BytesIO(file_bytes))
         text = pytesseract.image_to_string(img, lang="rus+eng")
@@ -92,9 +86,19 @@ def handle_photo(file_bytes: bytes) -> str:
     except Exception as e:
         return f"❌ Ошибка обработки фото: {e}"
 
-# -------------------------
-# /start
-# -------------------------
+def get_spb_news(limit=5) -> str:
+    rss_url = "https://www.fontanka.ru/fontanka.rss"
+    feed = feedparser.parse(rss_url)
+    news_list = []
+    for entry in feed.entries[:limit]:
+        news_list.append(f"• {entry.title}\n{entry.link}")
+    if not news_list:
+        return "❌ Не удалось получить новости."
+    return "\n\n".join(news_list)
+
+# ===============================
+# Хэндлеры
+# ===============================
 @dp.message_handler(commands=["start"])
 async def start(msg: types.Message):
     await msg.reply(
@@ -103,48 +107,42 @@ async def start(msg: types.Message):
         reply_markup=keyboard
     )
 
-# -------------------------
-# Обработка текстовых сообщений
-# -------------------------
 @dp.message_handler(content_types=ContentType.TEXT)
 async def handle_text(msg: types.Message):
-    text = msg.text.strip()
+    text = msg.text.strip().lower()
 
-    # Обработка выбора категории
-    if text.lower() == "подбор фильмов":
+    if text == "подбор фильмов":
         await msg.reply("🎬 Напиши жанр или тему фильмов, которые хочешь посмотреть.")
-    elif text.lower() == "задачи по судостроению":
+    elif text == "задачи по судостроению":
         await msg.reply("📐 Пришли текст или фото задачи по судостроению, и ИИ решит её.")
-elif text.lower() == "презентации":
+        elif text == "презентации":
         await msg.reply("📊 Пришли тему презентации, и ИИ сгенерирует готовый PPTX файл.")
-    elif text.lower() == "сокращение текстов / тексты":
+    elif text == "сокращение текстов / тексты":
         await msg.reply("✏️ Пришли текст, и ИИ его сократит или перепишет.")
-    elif text.lower() == "примеры / фото":
+    elif text == "примеры / фото":
         await msg.reply("📸 Пришли фото примера задачи или работы.")
-    elif text.lower() == "контрольная / фото":
+    elif text == "контрольная / фото":
         await msg.reply("📸 Пришли фото контрольной работы.")
-    elif text.lower() == "помощь ии":
+    elif text == "помощь ии":
         await msg.reply("🤖 Напиши любой вопрос, и ИИ ответит.")
+    elif text == "новости спб":
+        news = get_spb_news()
+        await msg.reply(news)
     else:
-        # Автоопределение запроса
-        if "фильмы" in text.lower():
+        # Всё остальное — ИИ
+        if "фильмы" in text:
             await msg.reply(recommend_movies(text))
-        elif "задача" in text.lower() or "судостроение" in text.lower():
+        elif "задача" in text or "судостроение" in text:
             await msg.reply(solve_shipbuilding_task(text))
-        elif text.lower().startswith("тема:") or "тема презентации" in text.lower():
+        elif text.startswith("тема:") or "тема презентации" in text:
             topic = text.replace("тема:", "").strip()
             pptx_file = make_presentation(topic)
             await msg.reply_document(document=pptx_file, filename=f"{topic[:20]}.pptx")
         elif len(text) > 20:
-            # Любой длинный текст → помощь ИИ / сокращение
             await msg.reply(summarize_text(text))
         else:
-            # Короткий текст → просто ИИ отвечает
             await msg.reply(generate_ai_response(text))
 
-# -------------------------
-# Обработка фото
-# -------------------------
 @dp.message_handler(content_types=ContentType.PHOTO)
 async def handle_photo_msg(msg: types.Message):
     photo = msg.photo[-1]
@@ -153,9 +151,8 @@ async def handle_photo_msg(msg: types.Message):
     response = handle_photo(file_bytes.read())
     await msg.reply(response)
 
-# -------------------------
-# Запуск бота
-# -------------------------
+# ===============================
+# Запуск
+# ===============================
 if __name__ == "__main__":
-    from aiogram import executor
     executor.start_polling(dp, skip_updates=True)
