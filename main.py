@@ -1,34 +1,31 @@
 mport os
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import CommandStart
-import google.genai as genai
 import asyncio
+from telegram import Update
+from telegram.ext import Application, MessageHandler, filters, ContextTypes
+import google.generativeai as genai
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# Настройка Gemini
+genai.configure(api_key="AIzaSyATxneFWXfIntvpcPf2zqtxoDBVQHPRmy4")
+model = genai.GenerativeModel('gemini-1.5-flash')
 
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")
-
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
-
-@dp.message(CommandStart())
-async def start(message: types.Message):
-    await message.answer("Привет 👋\nПросто напиши любой вопрос — я отвечу.")
-
-@dp.message()
-async def chat(message: types.Message):
+# Функция обработки сообщений
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_text = update.message.text
+    
     try:
-        response = model.generate_content(
-            "Отвечай на русском языке:\n" + message.text
-        )
-        await message.answer(response.text)
-    except:
-        await message.answer("Ошибка. Попробуй позже.")
+        # Генерируем ответ от ИИ
+        response = model.generate_content(user_text)
+        await update.message.reply_text(response.text)
+    except Exception as e:
+        await update.message.reply_text("Произошла ошибка при обращении к ИИ.")
+        print(f"Ошибка: {e}")
 
-async def main():
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+# Запуск бота
+if name == '__main__':
+    print("Бот запущен...")
+    application = Application.builder().token("8250295875:AAFAaOwraBoPYG9n-YUzKUUs0E8hYdVUltA").build()
+    
+    # Добавляем обработчик текстовых сообщений
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    application.run_polling()
