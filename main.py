@@ -126,6 +126,10 @@ async def webhook(request: Request):
 async def root():
     return {"status": "alive", "message": "Бот на webhook работает"}
 
+@app.get("/")
+async def root():
+    return {"status": "alive", "message": "Бот на webhook работает"}
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
