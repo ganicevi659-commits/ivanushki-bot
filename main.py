@@ -87,14 +87,32 @@ def handle_photo(file_bytes: bytes) -> str:
         return f"❌ Ошибка обработки фото: {e}"
 
 def get_spb_news(limit=5) -> str:
-    rss_url = "https://www.fontanka.ru/fontanka.rss"
-    feed = feedparser.parse(rss_url)
-    news_list = []
-    for entry in feed.entries[:limit]:
-        news_list.append(f"• {entry.title}\n{entry.link}")
-    if not news_list:
+    rss_urls = [
+        "https://www.fontanka.ru/fontanka.rss",      # Фонтанка (СПб)
+        "https://www.47news.ru/rss/all.xml"         # 47news (Ленобласть)
+    ]
+
+    all_entries = []
+    for url in rss_urls:
+        feed = feedparser.parse(url)
+        all_entries.extend(feed.entries)
+
+    # Сортируем по дате (самые новые сверху)
+    all_entries.sort(key=lambda x: x.get("published_parsed", 0), reverse=True)
+
+    # Берём только limit новостей
+    latest_news = all_entries[:limit]
+    if not latest_news:
         return "❌ Не удалось получить новости."
-    return "\n\n".join(news_list)
+
+    news_texts = []
+    for entry in latest_news:
+        # Используем ИИ, чтобы кратко сформулировать новость
+        summary_prompt = f"Сделай краткий, понятный пересказ новости: {entry.title}\nСсылка: {entry.link}"
+        summarized = generate_ai_response(summary_prompt)
+        news_texts.append(summarized)
+
+    return "\n\n".join(news_texts)
 
 # ===============================
 # Хэндлеры
@@ -115,7 +133,7 @@ async def handle_text(msg: types.Message):
         await msg.reply("🎬 Напиши жанр или тему фильмов, которые хочешь посмотреть.")
     elif text == "задачи по судостроению":
         await msg.reply("📐 Пришли текст или фото задачи по судостроению, и ИИ решит её.")
-        elif text == "презентации":
+    elif text == "презентации":
         await msg.reply("📊 Пришли тему презентации, и ИИ сгенерирует готовый PPTX файл.")
     elif text == "сокращение текстов / тексты":
         await msg.reply("✏️ Пришли текст, и ИИ его сократит или перепишет.")
