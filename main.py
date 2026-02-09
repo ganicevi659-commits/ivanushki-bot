@@ -5,50 +5,37 @@ from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 import google.generativeai as genai
 
-# --- 1. Мини-сервер для Render (чтобы не было ошибки Port Binding) ---
 app = Flask(__name__)
-
 @app.route('/')
-def health_check():
-    return "Бот работает!", 200
+def health(): return "OK", 200
 
 def run_flask():
-    # Render сам назначит порт, мы его просто берем
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
-# --- 2. Настройка Gemini и Telegram ---
-# Берем ключи, которые ты ввел в Dashboard Render
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+# Настройка ключей
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+G_KEY = os.getenv("GEMINI_API_KEY")
 
-genai.configure(api_key=GEMINI_KEY)
+genai.configure(api_key=G_KEY)
+# Используем модель flash и создаем чат с памятью
 model = genai.GenerativeModel('gemini-1.5-flash')
+chat = model.start_chat(history=[])
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Если пришло текстовое сообщение
     if update.message and update.message.text:
         try:
-            # Отправляем текст в Gemini
-            response = model.generate_content(update.message.text)
-            # Отправляем ответ пользователю в ТГ
+            # Отправляем сообщение в чат
+            response = chat.send_message(update.message.text)
             await update.message.reply_text(response.text)
         except Exception as e:
-            print(f"Ошибка Gemini: {e}")
-            await update.message.reply_text("Извини, ИИ задумался. Попробуй еще раз позже.")
+            # Печатаем РЕАЛЬНУЮ ошибку в логи Render
+            print(f"!!! ОШИБКА GEMINI: {e}")
+            await update.message.reply_text(f"Ошибка: {str(e)[:50]}...")
 
-# --- 3. Запуск всего вместе ---
 if __name__ == '__main__':
-    # Запускаем Flask в фоновом режиме
     threading.Thread(target=run_flask, daemon=True).start()
-    
-    print("Запускаю бота...")
-    
-    # Создаем приложение Telegram
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
-    
-    # Регистрируем обработчик сообщений
+    application = Application.builder().token(TOKEN).build()
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
-    # Начинаем слушать сообщения
+    print("Бот перезапущен и готов к тестам!")
     application.run_polling()
