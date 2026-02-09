@@ -1,11 +1,11 @@
 import os
 import threading
+import requests
 from flask import Flask
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
-import google.generativeai as genai
 
-# --- Веб-сервер для Render ---
+# --- Мини-сервер для Render ---
 app = Flask(__name__)
 @app.route('/')
 def health(): return "OK", 200
@@ -14,43 +14,44 @@ def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
-# --- Настройка API ---
+# --- Настройка ключей ---
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 G_KEY = os.getenv("GEMINI_API_KEY")
 
-# Настраиваем Gemini
-genai.configure(api_key=G_KEY)
-
-# Пробуем использовать модель 1.5-flash
-model = genai.GenerativeModel('gemini-1.5-flash')
+def ask_gemini(text):
+    # Прямой URL к стабильной версии API Gemini 1.5 Flash
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={G_KEY}"
+    
+    payload = {
+        "contents": [{
+            "parts": [{"text": text}]
+        }]
+    }
+    
+    response = requests.post(url, json=payload)
+    result = response.json()
+    
+    # Вытаскиваем текст из сложного JSON ответа Google
+    try:
+        return result['candidates'][0]['content']['parts'][0]['text']
+    except Exception as e:
+        print(f"Ошибка парсинга: {result}")
+        return f"Ошибка ИИ: {result.get('error', {}).get('message', 'Неизвестная ошибка')}"
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message and update.message.text:
-        try:
-            # Генерация контента
-            response = model.generate_content(update.message.text)
-            
-            # Проверка, есть ли текст в ответе
-            if response.text:
-                await update.message.reply_text(response.text)
-            else:
-                await update.message.reply_text("ИИ прислал пустой ответ.")
-                
-        except Exception as e:
-            error_msg = str(e)
-            print(f"!!! ОШИБКА: {error_msg}")
-            
-            # Если это проблема с регионом (РФ), мы это увидим
-            if "User location is not supported" in error_msg:
-                await update.message.reply_text("Ошибка: Google блокирует запросы из этого региона.")
-            else:
-                await update.message.reply_text(f"Произошла ошибка: {error_msg[:100]}")
+        user_text = update.message.text
+        # Отправляем статус "печатает", чтобы пользователь видел активность
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+        
+        answer = ask_gemini(user_text)
+        await update.message.reply_text(answer)
 
 if __name__ == '__main__':
-    # Запуск "заплатки" для порта
+    # Запуск фласка
     threading.Thread(target=run_flask, daemon=True).start()
     
-    print("Бот запускается...")
+    print("Бот запущен через Direct API Mode...")
     application = Application.builder().token(TOKEN).build()
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.run_polling()
