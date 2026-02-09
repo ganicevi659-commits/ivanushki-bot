@@ -1,31 +1,54 @@
 import os
-import asyncio
+import threading
+from flask import Flask
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 import google.generativeai as genai
 
-# Настройка Gemini
-genai.configure(api_key="AIzaSyATxneFWXfIntvpcPf2zqtxoDBVQHPRmy4")
+# --- 1. Мини-сервер для Render (чтобы не было ошибки Port Binding) ---
+app = Flask(__name__)
+
+@app.route('/')
+def health_check():
+    return "Бот работает!", 200
+
+def run_flask():
+    # Render сам назначит порт, мы его просто берем
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+# --- 2. Настройка Gemini и Telegram ---
+# Берем ключи, которые ты ввел в Dashboard Render
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+
+genai.configure(api_key=GEMINI_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-# Функция обработки сообщений
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_text = update.message.text
-    
-    try:
-        # Генерируем ответ от ИИ
-        response = model.generate_content(user_text)
-        await update.message.reply_text(response.text)
-    except Exception as e:
-        await update.message.reply_text("Произошла ошибка при обращении к ИИ.")
-        print(f"Ошибка: {e}")
+    # Если пришло текстовое сообщение
+    if update.message and update.message.text:
+        try:
+            # Отправляем текст в Gemini
+            response = model.generate_content(update.message.text)
+            # Отправляем ответ пользователю в ТГ
+            await update.message.reply_text(response.text)
+        except Exception as e:
+            print(f"Ошибка Gemini: {e}")
+            await update.message.reply_text("Извини, ИИ задумался. Попробуй еще раз позже.")
 
-# Запуск бота
+# --- 3. Запуск всего вместе ---
 if __name__ == '__main__':
-    print("Бот запущен...")
-    application = Application.builder().token("8250295875:AAFAaOwraBoPYG9n-YUzKUUs0E8hYdVUltA").build()
+    # Запускаем Flask в фоновом режиме
+    threading.Thread(target=run_flask, daemon=True).start()
     
-    # Добавляем обработчик текстовых сообщений
+    print("Запускаю бота...")
+    
+    # Создаем приложение Telegram
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
+    
+    # Регистрируем обработчик сообщений
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
+    # Начинаем слушать сообщения
     application.run_polling()
