@@ -1,7 +1,7 @@
 import os
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-import google.generativeai as genai
+import google.genai as genai
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
