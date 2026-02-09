@@ -1,67 +1,83 @@
 import os
-import google.generativeai as genai
+import asyncio
+from google import genai
 from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
     filters,
-    ContextTypes
+    ContextTypes,
 )
 
-# Берём переменные окружения (на Render их нужно будет добавить)
+# Переменные из окружения (Render → Environment)
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-GEMINI_API_KEY  = os.environ.get("GEMINI_API_KEY")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# Настраиваем Gemini
+if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
+    raise ValueError("TELEGRAM_TOKEN и GEMINI_API_KEY обязательны!")
+
+# Настройка Gemini (новый SDK)
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")   # или gemini-1.5-pro если есть доступ
 
-# Словарь для хранения истории разговора по каждому пользователю
-chats = {}
+# Используем самую стабильную и быструю модель на февраль 2026
+MODEL_NAME = "gemini-1.5-flash-002"   # или "gemini-2.0-flash" / "gemini-1.5-flash-latest"
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+chats = {}  # user_id → chat session
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "Привет! Я бот с Gemini.\nПросто пиши мне — я отвечу 😎"
+        "Привет! Я бот на базе Google Gemini.\nПросто пиши — отвечу максимально быстро 😄"
     )
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    user_text = update.message.text
+    text = update.message.text.strip()
 
-    # Если это первый сообщение — создаём новый чат
+    if not text:
+        return
+
     if user_id not in chats:
+        model = genai.GenerativeModel(MODEL_NAME)
         chats[user_id] = model.start_chat(history=[])
 
     chat = chats[user_id]
 
     try:
-        # Отправляем "печатает..." 
+        # Показываем, что бот "печатает"
         await context.bot.send_chat_action(
-            chat_id=update.effective_chat.id,
-            action="typing"
+            chat_id=update.effective_chat.id, action="typing"
         )
 
-        response = chat.send_message(user_text)
+        # Отправляем сообщение в Gemini (асинхронно)
+        response = await chat.send_message_async(text)
         answer = response.text
 
-        await update.message.reply_text(answer)
+        await update.message.reply_text(answer, parse_mode=None)  # без лишнего форматирования
 
     except Exception as e:
-        await update.message.reply_text(f"Ошибка: {str(e)}\nПопробуй ещё раз чуть позже.")
+        error_msg = str(e)
+        if "429" in error_msg or "quota" in error_msg.lower():
+            await update.message.reply_text("Лимит запросов к Gemini. Подожди 1–2 минуты и попробуй снова.")
+        else:
+            await update.message.reply_text(f"Ошибка:\n{error_msg[:400]}")
+
+async def clear_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    if user_id in chats:
+        del chats[user_id]
+    await update.message.reply_text("Чат очищен. Можно начинать новый разговор!")
 
 def main():
-    if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
-        print("Ошибка! Не заданы TELEGRAM_TOKEN или GEMINI_API_KEY")
-        return
-
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("new", clear_chat))       # /new — очистить историю
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("Бот запущен...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    print("Бот запущен (polling mode)")
+    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+
 
 if __name__ == "__main__":
     main()
