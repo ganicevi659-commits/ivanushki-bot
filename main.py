@@ -1,6 +1,5 @@
 import os
 import logging
-import asyncio
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -23,8 +22,8 @@ if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
     raise ValueError("TELEGRAM_TOKEN и GEMINI_API_KEY обязательны!")
 
 # ---------- Gemini ----------
-MODEL_NAME = "gemini-1.5-flash-latest"
 client = genai.Client(api_key=GEMINI_API_KEY)
+model = client.models.get("gemini-1.5-flash-latest")
 
 # ---------- Команды ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -43,16 +42,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             action="typing"
         )
 
-        # ⚠️ ВАЖНО: вызов Gemini через lambda
-        response = await asyncio.to_thread(
-            lambda: client.models.generate_content(
-                model=MODEL_NAME,
-                contents=text
-            )
-        )
-
-        answer = response.text.strip()
-        await update.message.reply_text(answer)
+        # ✅ ПРАВИЛЬНЫЙ вызов Gemini
+        response = model.generate_content(text)
+        await update.message.reply_text(response.text)
 
     except Exception as e:
         logger.exception("Gemini ошибка")
