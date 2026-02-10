@@ -22,10 +22,11 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
     raise ValueError("TELEGRAM_TOKEN и GEMINI_API_KEY обязательны!")
 
+# ---------- Gemini ----------
 MODEL_NAME = "gemini-1.5-flash-latest"
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# ---------- Обработчики ----------
+# ---------- Команды ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Привет! Я жив 👋 Пиши что угодно.")
 
@@ -38,16 +39,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         await context.bot.send_chat_action(
-            chat_id=update.effective_chat.id, action="typing"
+            chat_id=update.effective_chat.id,
+            action="typing"
         )
 
+        # ⚠️ ВАЖНО: вызов Gemini через lambda
         response = await asyncio.to_thread(
-            client.models.generate_content,
-            MODEL_NAME,
-            text
+            lambda: client.models.generate_content(
+                model=MODEL_NAME,
+                contents=text
+            )
         )
 
-        await update.message.reply_text(response.text)
+        answer = response.text.strip()
+        await update.message.reply_text(answer)
 
     except Exception as e:
         logger.exception("Gemini ошибка")
@@ -55,7 +60,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"❌ Gemini ошибка:\n{type(e).__name__}: {str(e)[:300]}"
         )
 
-# ---------- ЗАПУСК ----------
+# ---------- Запуск ----------
 def main():
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
@@ -65,7 +70,7 @@ def main():
     )
 
     logger.info("✅ Бот запущен в polling режиме")
-    application.run_polling()   # ← ВАЖНО: БЕЗ await
+    application.run_polling()
 
 if __name__ == "__main__":
     main()
