@@ -224,7 +224,7 @@ def main():
     app.add_handler(CommandHandler("picinoz", picinoz))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_msg))
 
-    logger.nfo("✅ Бот запущен в polling режиме")
+    logger.info("✅ Бот запущен в polling режиме")
     app.run_polling()
 
 if __name__ == "__main__":
