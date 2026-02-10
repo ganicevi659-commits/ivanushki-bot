@@ -17,12 +17,12 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(name)
 
 # Переменные окружения
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET")  # должен быть без пробелов, кириллицы и т.д.
+WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET")
 
 if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
     raise ValueError("TELEGRAM_TOKEN и GEMINI_API_KEY обязательны!")
@@ -30,8 +30,11 @@ if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
 if not WEBHOOK_SECRET:
     logger.warning("WEBHOOK_SECRET не задан → секрет проверяться не будет")
 
-# Gemini (новый правильный способ в google-genai)
-MODEL_NAME = "gemini-1.5-flash-latest"  # или gemini-1.5-flash-002 / gemini-2.0-flash
+# Gemini
+MODEL_NAME = "gemini-1.5-flash-latest"
+
+# 🔹 ВОТ ЭТО ДОБАВЛЕНО (1 строка)
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 # Telegram приложение
 application = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -55,9 +58,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             chat_id=update.effective_chat.id, action="typing"
         )
 
-        # Правильное создание модели в новом SDK
-        model = genai.GenerativeModel(MODEL_NAME)
-        response = await model.generate_content_async(text)
+        # 🔹 ЗАМЕНЕНЫ ТОЛЬКО ЭТИ 3 СТРОКИ
+        response = await client.models.generate_content_async(
+            model=MODEL_NAME,
+            contents=text,
+        )
         answer = response.text.strip()
 
         logger.info("Gemini ответил успешно")
@@ -72,10 +77,9 @@ application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("new", clear_chat))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-# Lifespan — правильная инициализация и установка webhook
+# Lifespan
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
     await application.initialize()
     await application.start()
 
@@ -92,14 +96,12 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown
     await application.stop()
     await application.shutdown()
 
-# FastAPI с lifespan
+# FastAPI
 app = FastAPI(lifespan=lifespan)
 
-# Webhook
 @app.post("/webhook")
 async def webhook(request: Request):
     logger.info("Получен запрос на /webhook от Telegram")
@@ -121,7 +123,6 @@ async def webhook(request: Request):
 
     return {"ok": True}
 
-# Health-check
 @app.get("/")
 async def root():
     return {"status": "alive", "message": "Бот на webhook работает"}
@@ -129,8 +130,7 @@ async def root():
 @app.get("/")
 async def root():
     return {"status": "alive", "message": "Бот на webhook работает"}
-
-if __name__ == "__main__":
+if __name__ == "main":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     logger.info(f"Запуск сервера на порту {port}")
