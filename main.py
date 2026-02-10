@@ -178,18 +178,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Приятно познакомиться, {text}!")
         return
 
-    prompt = f"Пользователь {user_data[user_key]['name']} спрашивает: {text}" if user_key in user_data else text
+    prompt = f"Пользователь {user_data[user_key]['name']} спрашивает: {text}" \
+        if user_key in user_data else text
+
     logger.info(f"Запрос к Gemini: {prompt}")
 
     try:
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
 
-        # ---------- Gemini 2.5 Flash ----------
-        response = client.generate_text(
-            model=MODEL_NAME,
-            prompt=prompt,
-        )
-        answer = response.text.strip()
+        # ---------- Gemini 2.5 Flash новый синтаксис ----------
+        model = client.models.get(MODEL_NAME)
+        response = model.generate(prompt=prompt)
+        answer = response.output_text
+
         await update.message.reply_text(answer)
 
     except Exception as e:
@@ -216,4 +217,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
