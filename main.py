@@ -17,7 +17,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)  # ✅ исправлено
 
 # Переменные окружения
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -32,9 +32,7 @@ if not WEBHOOK_SECRET:
 
 # Gemini
 MODEL_NAME = "gemini-1.5-flash-latest"
-
-# 🔹 ВОТ ЭТО ДОБАВЛЕНО (1 строка)
-client = genai.Client(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=GEMINI_API_KEY)  # ✅ исправлено
 
 # Telegram приложение
 application = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -58,7 +56,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             chat_id=update.effective_chat.id, action="typing"
         )
 
-        # 🔹 ЗАМЕНЕНЫ ТОЛЬКО ЭТИ 3 СТРОКИ
+        # ✅ Gemini вызов через новый SDK
         response = await client.models.generate_content_async(
             model=MODEL_NAME,
             contents=text,
@@ -126,11 +124,8 @@ async def webhook(request: Request):
 @app.get("/")
 async def root():
     return {"status": "alive", "message": "Бот на webhook работает"}
-
-@app.get("/")
-async def root():
-    return {"status": "alive", "message": "Бот на webhook работает"}
-if __name__ == "main":
+# ✅ Локальный запуск через python main.py
+if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     logger.info(f"Запуск сервера на порту {port}")
