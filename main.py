@@ -41,33 +41,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id=update.effective_chat.id, action="typing"
         )
 
-        # ---------- Вызов Gemini через asyncio.to_thread ----------
         response = await asyncio.to_thread(
             client.models.generate_content,
             MODEL_NAME,
             text
         )
-        answer = response.text.strip()
 
-        logger.info("Gemini ответил успешно")
-        await update.message.reply_text(answer)
+        await update.message.reply_text(response.text)
 
     except Exception as e:
-        # Показываем реальную ошибку
-        logger.exception("Gemini реальная ошибка")
+        logger.exception("Gemini ошибка")
         await update.message.reply_text(
             f"❌ Gemini ошибка:\n{type(e).__name__}: {str(e)[:300]}"
         )
 
-# ---------- Основная функция ----------
-async def main():
+# ---------- ЗАПУСК ----------
+def main():
     application = Application.builder().token(TELEGRAM_TOKEN).build()
+
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+    )
 
-    logger.info("Бот запущен в polling режиме")
-    await application.run_polling()
+    logger.info("✅ Бот запущен в polling режиме")
+    application.run_polling()   # ← ВАЖНО: БЕЗ await
 
-# ---------- Запуск ----------
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
