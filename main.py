@@ -23,7 +23,7 @@ if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
 
 # ---------- Gemini ----------
 client = genai.Client(api_key=GEMINI_API_KEY)
-model = client.models.get("gemini-1.5-flash-latest")
+MODEL_NAME = "gemini-1.5-flash-latest"
 
 # ---------- Команды ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -42,8 +42,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             action="typing"
         )
 
-        # ✅ ПРАВИЛЬНЫЙ вызов Gemini
-        response = model.generate_content(text)
+        # ✅ ЕДИНСТВЕННО ПРАВИЛЬНЫЙ вызов для google-genai==1.*
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=text
+        )
+
         await update.message.reply_text(response.text)
 
     except Exception as e:
@@ -64,5 +68,5 @@ def main():
     logger.info("✅ Бот запущен в polling режиме")
     application.run_polling()
 
-if __name__ == "__main__":
+if __name___ == "__main__":
     main()
