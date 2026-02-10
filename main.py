@@ -56,10 +56,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             chat_id=update.effective_chat.id, action="typing"
         )
 
-        # ✅ Gemini вызов через новый SDK
-        response = await client.models.generate_content_async(
+        # ✅ Новый рабочий вызов Gemini
+        response = await client.generate_text(
             model=MODEL_NAME,
-            contents=text,
+            prompt=text
         )
         answer = response.text.strip()
 
@@ -67,9 +67,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(answer)
 
     except Exception as e:
-        logger.error(f"Gemini ошибка: {str(e)}", exc_info=True)
-        await update.message.reply_text(f"Ошибка: {str(e)[:250]}\nПопробуй позже")
-
+        logger.error(f"Gemini ошибка: {e}", exc_info=True)
+        await update.message.reply_text("Ошибка: Gemini временно недоступен. Попробуй позже")
 # Регистрация обработчиков
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("new", clear_chat))
