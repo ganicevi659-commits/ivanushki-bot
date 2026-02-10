@@ -5,7 +5,13 @@ import logging
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.constants import ChatAction
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    ContextTypes,
+)
 from google import genai
 
 # ---------- Логирование ----------
@@ -27,17 +33,15 @@ if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
     raise ValueError("TELEGRAM_TOKEN и GEMINI_API_KEY обязательны!")
 
 # ---------- Загрузка данных ----------
+user_data = {}
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         user_data = json.load(f)
-else:
-    user_data = {}
 
+blacklist = []
 if os.path.exists(BLACKLIST_FILE):
     with open(BLACKLIST_FILE, "r", encoding="utf-8") as f:
         blacklist = json.load(f)
-else:
-    blacklist = []
 
 last_message_time = {}  # {user_id: timestamp}
 
@@ -68,7 +72,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_data[user_key] = {"name": None, "history": [], "warnings": 0}
         save_user_data()
         text = "Привет! Я бот на Gemini 2.5 Flash 🚀\nНапиши своё имя, и я тебя запомню!"
-        image_url = "https://i.imgur.com/5cX9a9k.jpg"  # пример картинки
+        image_url = "https://i.imgur.com/5cX9a9k.jpg"
         await context.bot.send_photo(
             chat_id=update.effective_chat.id,
             photo=image_url,
@@ -88,10 +92,11 @@ async def clear_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Чат очищен! Можешь писать дальше.")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if is_blocked(update.effective_user.id):
+    user_id = update.effective_user.id
+    if is_blocked(user_id):
         return
     text = (
-        "💡 Команды:\n"
+        "💡 Список команд:\n"
         "/start - Запустить бота\n"
         "/new - Очистить чат\n"
         "/help - Показать это сообщение\n"
@@ -103,7 +108,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if is_blocked(update.effective_user.id):
+    user_id = update.effective_user.id
+    if is_blocked(user_id):
         return
     text = (
         "🤖 Бот на Gemini 2.5 Flash\n"
@@ -178,8 +184,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
 
-        # ---------- Gemini 2.5 Flash новый синтаксис ----------
-        response = client.generate_text(model=MODEL_NAME, prompt=prompt)
+        # ---------- Gemini 2.5 Flash (новый метод) ----------
+        model = client.models.get(MODEL_NAME)
+        response = model.generate(prompt=prompt)
         answer = response.output_text
 
         await update.message.reply_text(answer)
@@ -190,22 +197,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ---------- Основной запуск ----------
 def main():
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
+    try:
+        application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    # Команды
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("new", clear_chat))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("about", about_command))
-    application.add_handler(CommandHandler("block", block_command))
-    application.add_handler(CommandHandler("unblock", unblock_command))
+        # Команды
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("new", clear_chat))
+        application.add_handler(CommandHandler("help", help_command))
+        application.add_handler(CommandHandler("about", about_command))
+        application.add_handler(CommandHandler("block", block_command))
+        application.add_handler(CommandHandler("unblock", unblock_command))
 
-    # Сообщения
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        # Сообщения
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    logger.info("✅ Бот запущен в polling режиме")
-    application.run_polling()
+        logger.info("✅ Бот запущен в polling режиме")
+        application.run_polling()
+
+    except Exception as e:
+        logger.exception("Ошибка при запуске бота")
+        print(f"Ошибка при запуске: {e}")
 
 if __name__ == "__main__":
     main()
-
