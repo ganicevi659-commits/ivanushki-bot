@@ -68,5 +68,5 @@ def main():
     logger.info("✅ Бот запущен в polling режиме")
     application.run_polling()
 
-if __name___ == "__main__":
+if __name__ == "__main__":
     main()
