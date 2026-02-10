@@ -5,13 +5,7 @@ import logging
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.constants import ChatAction
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    filters,
-    ContextTypes,
-)
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from google import genai
 
 # ---------- Логирование ----------
@@ -94,11 +88,10 @@ async def clear_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Чат очищен! Можешь писать дальше.")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if is_blocked(user_id):
+    if is_blocked(update.effective_user.id):
         return
     text = (
-        "💡 Список команд:\n"
+        "💡 Команды:\n"
         "/start - Запустить бота\n"
         "/new - Очистить чат\n"
         "/help - Показать это сообщение\n"
@@ -110,8 +103,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if is_blocked(user_id):
+    if is_blocked(update.effective_user.id):
         return
     text = (
         "🤖 Бот на Gemini 2.5 Flash\n"
@@ -187,8 +179,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
 
         # ---------- Gemini 2.5 Flash новый синтаксис ----------
-        model = client.models.get(MODEL_NAME)
-        response = model.generate(prompt=prompt)
+        response = client.generate_text(model=MODEL_NAME, prompt=prompt)
         answer = response.output_text
 
         await update.message.reply_text(answer)
@@ -217,5 +208,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
