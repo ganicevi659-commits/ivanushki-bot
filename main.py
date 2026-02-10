@@ -2,9 +2,8 @@ import os
 import json
 import time
 import logging
-import re
 from dotenv import load_dotenv
-from telegram import Update, ChatPermissions
+from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -22,68 +21,60 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS","").split(",") if x]
+RATE_LIMIT = int(os.getenv("RATE_LIMIT", 3))
+MAX_WARNINGS = int(os.getenv("MAX_WARNINGS", 3))
+ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 
-RATE_LIMIT = int(os.getenv("RATE_LIMIT",3))
-MAX_WARNINGS = int(os.getenv("MAX_WARNINGS",3))
-
-DATA_FILE = "users.json"
+DATA_FILE = "user_data.json"
 BLACKLIST_FILE = "blacklist.json"
-LOG_FILE = "violations.log"
+WARNINGS_FILE = "warnings.json"
 
 if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
     raise ValueError("TELEGRAM_TOKEN и GEMINI_API_KEY обязательны!")
 
-# ---------- Загружаем память ----------
+# ---------- Загрузка памяти ----------
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r", encoding="utf-8") as f:
-        users = json.load(f)
+        user_data = json.load(f)
 else:
-    users = {}
+    user_data = {}
 
-# ---------- Загружаем черный список ----------
 if os.path.exists(BLACKLIST_FILE):
     with open(BLACKLIST_FILE, "r", encoding="utf-8") as f:
         blacklist = json.load(f)
 else:
     blacklist = []
 
+if os.path.exists(WARNINGS_FILE):
+    with open(WARNINGS_FILE, "r", encoding="utf-8") as f:
+        warnings = json.load(f)
+else:
+    warnings = {}
+
 # ---------- Хранение времени последнего сообщения ----------
-last_msg_time = {}
+last_message_time = {}  # {user_id: timestamp}
 
 # ---------- Gemini 2.5 Flash ----------
 client = genai.Client(api_key=GEMINI_API_KEY)
-MODEL = "gemini-2.5-flash"
+MODEL_NAME = "gemini-2.5-flash"
 
-# ---------- Сохраняем данные ----------
-def save():
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(users, f, ensure_ascii=False, indent=4)
-    with open(BLACKLIST_FILE, "w", encoding="utf-8") as f:
-        json.dump(blacklist, f, ensure_ascii=False, indent=4)
+# ---------- Сохранение данных ----------
+def save_json(file, data):
+    with open(file, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
 
-# ---------- Проверки ----------
-def is_admin(uid):
-    return uid in ADMIN_IDS
+def save_user_data():
+    save_json(DATA_FILE, user_data)
 
-def is_blocked(uid):
-    return uid in blacklist
+def save_blacklist():
+    save_json(BLACKLIST_FILE, blacklist)
 
-# ---------- Логи нарушений ----------
-def log_violation(user_id, reason, msg_text=""):
-    with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(f"{time.ctime()} | User {user_id} | {reason} | {msg_text}\n")
+def save_warnings():
+    save_json(WARNINGS_FILE, warnings)
 
-# ---------- AI-анализ токсичности ----------
-def is_toxic(message: str) -> bool:
-    # Простейший пример: содержит грубые слова
-    toxic_words = ["дурак", "идиот", "лох", "тупой"]  # можно расширять
-    return any(word.lower() in message.lower() for word in toxic_words)
-
-# ---------- Анти-линки ----------
-def contains_link(message: str) -> bool:
-    url_pattern = r"(https?://|www\.)\S+"
-    return bool(re.search(url_pattern, message))
+# ---------- Проверка на блокировку ----------
+def is_blocked(user_id):
+    return user_id in blacklist
 
 # ---------- Команды ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -91,141 +82,146 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_blocked(user_id):
         return
     user_key = str(user_id)
-    if user_key not in users:
-        users[user_key] = {"name": None, "warns": 0}
-        save()
+    if user_key not in user_data:
+        user_data[user_key] = {"name": None}
+        save_user_data()
+
         text = "Привет! Я бот на Gemini 2.5 Flash 🚀\nНапиши своё имя, и я тебя запомню!"
         image_url = "https://i.imgur.com/5cX9a9k.jpg"
-        await context.bot.send_photo(chat_id=update.effective_chat.id,
-                                     photo=image_url,
-                                     caption=text)
+
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
+            photo=image_url,
+            caption=text
+        )
     else:
         await update.message.reply_text("С возвращением! Пиши что угодно — я отвечу.")
 
-async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if is_blocked(update.effective_user.id):
+async def clear_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if is_blocked(user_id):
+        return
+    await update.message.reply_text("Чат очищен! Пиши дальше.")
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if is_blocked(user_id):
         return
     text = (
         "💡 Список команд:\n"
         "/start - Запустить бота\n"
+        "/new - Очистить чат\n"
         "/help - Показать это сообщение\n"
         "/about - Информация о боте\n"
-        "/warn - Предупреждение (только админ, ответом на сообщение)\n"
-        "/ishak - Роль ИШАК 🐴 (ответом)\n"
-        "/picinoz - Прикол 😎\n"
+        "/block <user_id> - Добавить пользователя в черный список (только админ)\n"
+        "/unblock <user_id> - Удалить пользователя из черного списка (только админ)\n"
+        "Дополнительно: бот может вести предупреждения за спам и нарушителей"
     )
     await update.message.reply_text(text)
 
-async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if is_blocked(update.effective_user.id):
+async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if is_blocked(user_id):
         return
     text = (
         "🤖 Бот на Gemini 2.5 Flash\n"
-        "Память: имя пользователя, предупреждения\n"
-        "Защита: rate-limit сообщений, черный список, анти-линки, токсичность\n"
-"Fun: приколы /ishak, /picinoz"
+        "Память: могу запоминать имя пользователя и приветствовать новых\n"
+        "Защита: rate-limit сообщений, черный список, авто-предупреждения за нарушения"
     )
     await update.message.reply_text(text)
 
-# ---------- Fun команды ----------
-async def ishak(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message.reply_to_message:
-        await update.message.reply_text("Ответь на сообщение пользователя для роли ИШАК 🐴")
+# ---------- Черный список ----------
+async def block_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("❌ Только админ может блокировать пользователей")
         return
-    await update.message.reply_text("🐴 Роль ИШАК присвоена!")
+    if not context.args:
+        await update.message.reply_text("Использование: /block <user_id>")
+        return
+    try:
+        block_id = int(context.args[0])
+        if block_id not in blacklist:
+            blacklist.append(block_id)
+            save_blacklist()
+        await update.message.reply_text(f"Пользователь {block_id} добавлен в черный список ✅")
+    except ValueError:
+        await update.message.reply_text("❌ Неверный ID")
 
-async def picinoz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🍕 Пичиноц активирован 😎")
-
-# ---------- Админ предупреждения ----------
-async def warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
+async def unblock_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("❌ Только админ может разблокировать пользователей")
         return
-    if not update.message.reply_to_message:
-        await update.message.reply_text("Ответь на сообщение пользователя для предупреждения")
+    if not context.args:
+        await update.message.reply_text("Использование: /unblock <user_id>")
         return
-    uid = update.message.reply_to_message.from_user.id
-    key = str(uid)
-    users.setdefault(key, {"name": None, "warns": 0})
-    users[key]["warns"] += 1
-    w = users[key]["warns"]
-    save()
-    log_violation(uid, f"warn {w}", update.message.reply_to_message.text)
-    if w >= MAX_WARNINGS:
-        blacklist.append(uid)
-        save()
-        log_violation(uid, "auto-ban", update.message.reply_to_message.text)
-        await update.message.reply_text("🚫 Пользователь заблокирован за нарушения!")
-    else:
-        await update.message.reply_text(f"⚠️ Предупреждение {w}/{MAX_WARNINGS}")
+    try:
+        unblock_id = int(context.args[0])
+        if unblock_id in blacklist:
+            blacklist.remove(unblock_id)
+            save_blacklist()
+        await update.message.reply_text(f"Пользователь {unblock_id} удалён из черного списка ✅")
+    except ValueError:
+        await update.message.reply_text("❌ Неверный ID")
 
 # ---------- Обработка сообщений ----------
-async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if is_blocked(user_id):
         return
 
-    now = time.time()
-    if user_id in last_msg_time and now - last_msg_time[user_id] < RATE_LIMIT:
-        await update.message.reply_text(f"⏱️ Подожди {RATE_LIMIT} секунд перед следующим сообщением")
-        return
-    last_msg_time[user_id] = now
-
     user_key = str(user_id)
     text = update.message.text.strip()
+    now = time.time()
 
-    # ---------- Проверка на токсичность ----------
-    if is_toxic(text):
-        log_violation(user_id, "toxic_message", text)
-        users.setdefault(user_key, {"name": None, "warns": 0})
-        users[user_key]["warns"] += 1
-        save()
-        await update.message.reply_text(f"⚠️ Сообщение считается токсичным! Предупреждение {users[user_key]['warns']}/{MAX_WARNINGS}")
-        if users[user_key]["warns"] >= MAX_WARNINGS:
-            blacklist.append(user_id)
-            save()
-            await update.message.reply_text("🚫 Пользователь заблокирован за токсичность!")
+    # ---------- Rate-limit ----------
+    if user_id in last_message_time and now - last_message_time[user_id] < RATE_LIMIT:
+        await update.message.reply_text(f"⏱️ Подожди {RATE_LIMIT} секунд перед следующим сообщением")
         return
+    last_message_time[user_id] = now
 
-    # ---------- Проверка на ссылки ----------
-    if contains_link(text):
-        log_violation(user_id, "link_detected", text)
-        await update.message.delete()
-        await update.message.reply_text("⚠️ Ссылки запрещены!")
-        return
-
-    # ---------- Сохраняем имя ----------
-    if users[user_key]["name"] is None:
-        users[user_key]["name"] = text
-        save()
+    # ---------- Память имени ----------
+    if user_key in user_data and not user_data[user_key].get("name"):
+        user_data[user_key]["name"] = text
+        save_user_data()
         await update.message.reply_text(f"Приятно познакомиться, {text}!")
         return
 
-    # ---------- Отправка в Gemini ----------
-    prompt = f"{users[user_key]['name']} спрашивает: {text}"
+    # ---------- AI-ответ ----------
+    prompt = text
+    if user_key in user_data and user_data[user_key].get("name"):
+        name = user_data[user_key]["name"]
+        prompt = f"Пользователь {name} спрашивает: {text}"
+
     logger.info(f"Запрос к Gemini: {prompt}")
+
     try:
-        model = genai.GenerativeModel(MODEL)
-        resp = model.generate_content(prompt)
-        await update.message.reply_text(resp.text[:4000])
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+        response = await client.generate_text(model=MODEL_NAME, prompt=prompt)
+        answer = response.text.strip()
+        await update.message.reply_text(answer)
     except Exception as e:
         logger.exception("Gemini ошибка")
-        await update.message.reply_text(f"❌ Gemini ошибка: {type(e).__name__}: {str(e)[:300]}")
+        await update.message.reply_text(f"❌ Gemini ошибка:\n{type(e).__name__}: {str(e)[:300]}")
 
 # ---------- Основной запуск ----------
 def main():
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_cmd))
-    app.add_handler(CommandHandler("about", about))
-    app.add_handler(CommandHandler("warn", warn))
-    app.add_handler(CommandHandler("ishak", ishak))
-    app.add_handler(CommandHandler("picinoz", picinoz))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_msg))
+    # Команды
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("new", clear_chat))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("about", about_command))
+    application.add_handler(CommandHandler("block", block_command))
+    application.add_handler(CommandHandler("unblock", unblock_command))
+
+    # Сообщения
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     logger.info("✅ Бот запущен в polling режиме")
-    app.run_polling()
+    application.run_polling()
 
 if __name__ == "__main__":
     main()
