@@ -3,7 +3,7 @@ import json
 import time
 import logging
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import Update, ChatAction
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -23,7 +23,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 RATE_LIMIT = int(os.getenv("RATE_LIMIT", 3))
 MAX_WARNINGS = int(os.getenv("MAX_WARNINGS", 3))
-ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x]
+ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 
 DATA_FILE = "user_data.json"
 BLACKLIST_FILE = "blacklist.json"
@@ -31,28 +31,26 @@ BLACKLIST_FILE = "blacklist.json"
 if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
     raise ValueError("TELEGRAM_TOKEN и GEMINI_API_KEY обязательны!")
 
-# ---------- Загружаем память ----------
+# ---------- Загрузка данных ----------
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         user_data = json.load(f)
 else:
     user_data = {}
 
-# ---------- Загружаем черный список ----------
 if os.path.exists(BLACKLIST_FILE):
     with open(BLACKLIST_FILE, "r", encoding="utf-8") as f:
         blacklist = json.load(f)
 else:
     blacklist = []
 
-# ---------- Хранение времени последнего сообщения и предупреждений ----------
 last_message_time = {}  # {user_id: timestamp}
-user_warnings = {}      # {user_id: warning_count}
 
 # ---------- Gemini 2.5 Flash ----------
 client = genai.Client(api_key=GEMINI_API_KEY)
 MODEL_NAME = "gemini-2.5-flash"
 
+# ---------- Сохранение данных ----------
 def save_user_data():
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(user_data, f, ensure_ascii=False, indent=4)
@@ -61,7 +59,7 @@ def save_blacklist():
     with open(BLACKLIST_FILE, "w", encoding="utf-8") as f:
         json.dump(blacklist, f, ensure_ascii=False, indent=4)
 
-# ---------- Проверка на блокировку ----------
+# ---------- Проверка блокировки ----------
 def is_blocked(user_id):
     return user_id in blacklist
 
@@ -72,12 +70,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_key = str(user_id)
     if user_key not in user_data:
-        user_data[user_key] = {"name": None}
+        user_data[user_key] = {"name": None, "history": [], "warnings": 0}
         save_user_data()
-
         text = "Привет! Я бот на Gemini 2.5 Flash 🚀\nНапиши своё имя, и я тебя запомню!"
-        image_url = "https://i.imgur.com/5cX9a9k.jpg"  # Можно заменить своей картинкой
-
+        image_url = "https://i.imgur.com/5cX9a9k.jpg"  # пример картинки
         await context.bot.send_photo(
             chat_id=update.effective_chat.id,
             photo=image_url,
@@ -90,7 +86,11 @@ async def clear_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if is_blocked(user_id):
         return
-    await update.message.reply_text("Чат очищен! Пиши дальше.")
+    user_key = str(user_id)
+    if user_key in user_data:
+        user_data[user_key]["history"] = []
+        save_user_data()
+    await update.message.reply_text("Чат очищен! Можешь писать дальше.")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -102,8 +102,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/new - Очистить чат\n"
         "/help - Показать это сообщение\n"
         "/about - Информация о боте\n"
-        "/block <user_id> - Добавить пользователя в черный список (только для админа)\n"
-        "/unblock <user_id> - Удалить пользователя из черного списка (только для админа)"
+        "/block <user_id> - Заблокировать пользователя (только админ)\n"
+        "/unblock <user_id> - Разблокировать пользователя (только админ)\n"
+        "🚀 Дополнительно: бот может предупреждать, мутить и удалять сообщения нарушителей"
     )
     await update.message.reply_text(text)
 
@@ -113,12 +114,12 @@ async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     text = (
         "🤖 Бот на Gemini 2.5 Flash\n"
-        "Память: могу запоминать имя пользователя и приветствовать новых\n"
-        "Защита: rate-limit сообщений, черный список, анти-спам"
+        "Память: запоминаю имя пользователя и приветствую новых\n"
+        "Защита: rate-limit, черный список, анти-спам, удаление сообщений"
     )
     await update.message.reply_text(text)
 
-# ---------- Управление черным списком ----------
+# ---------- Черный список ----------
 async def block_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in ADMIN_IDS:
@@ -169,22 +170,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     last_message_time[user_id] = now
 
-    # ---------- Предупреждения за спам/неподходящие сообщения ----------
-    warnings = user_warnings.get(user_id, 0)
-
-    # Пример: проверка на ссылки
-    if "http" in text.lower() or "t.me" in text.lower():
-        warnings += 1
-        user_warnings[user_id] = warnings
-        if warnings >= MAX_WARNINGS:
-            blacklist.append(user_id)
-            save_blacklist()
-            await update.message.reply_text("⚠️ Ты превысил лимит предупреждений. Заблокирован!")
-            return
-        else:
-            await update.message.reply_text(f"⚠️ Осторожно! Нарушение {warnings}/{MAX_WARNINGS}")
-            return
-
     # ---------- Память имени ----------
     if user_key in user_data and not user_data[user_key].get("name"):
         user_data[user_key]["name"] = text
@@ -192,24 +177,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Приятно познакомиться, {text}!")
         return
 
-    prompt = text
-    if user_key in user_data and user_data[user_key].get("name"):
-        name = user_data[user_key]["name"]
-        prompt = f"Пользователь {name} спрашивает: {text}"
-
+    prompt = f"Пользователь {user_data[user_key]['name']} спрашивает: {text}" if user_key in user_data else text
     logger.info(f"Запрос к Gemini: {prompt}")
 
     try:
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
 
         # ---------- Gemini 2.5 Flash ----------
-        model = client.models.get(MODEL_NAME)
-        response = await model.generate_content_async(
+        response = client.generate_text(
+            model=MODEL_NAME,
             prompt=prompt,
-            temperature=0.7,
-            max_output_tokens=500
         )
-        answer = response.output_text.strip()
+        answer = response.text.strip()
         await update.message.reply_text(answer)
 
     except Exception as e:
@@ -236,3 +215,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
