@@ -1,50 +1,35 @@
 import os
 import logging
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, HTTPException
+import asyncio
 from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
-    filters,
     ContextTypes,
+    filters,
 )
 from google import genai
 
-# Логирование
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)  # ✅ исправлено
+# ---------- Логирование ----------
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Переменные окружения
+# ---------- Переменные окружения ----------
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET")
 
 if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
     raise ValueError("TELEGRAM_TOKEN и GEMINI_API_KEY обязательны!")
 
-if not WEBHOOK_SECRET:
-    logger.warning("WEBHOOK_SECRET не задан → секрет проверяться не будет")
-
-# Gemini
 MODEL_NAME = "gemini-1.5-flash-latest"
-client = genai.Client(api_key=GEMINI_API_KEY)  # ✅ исправлено
+client = genai.Client(api_key=GEMINI_API_KEY)
 
-# Telegram приложение
-application = Application.builder().token(TELEGRAM_TOKEN).build()
+# ---------- Обработчики ----------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Привет! Я жив 👋 Пиши что угодно.")
 
-# Обработчики
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text("Привет! Пиши что угодно — отвечу с Gemini 🚀")
-
-async def clear_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text("Чат очищен! Просто пиши дальше.")
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if not text:
         return
@@ -56,10 +41,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             chat_id=update.effective_chat.id, action="typing"
         )
 
-        # ✅ Новый рабочий вызов Gemini
-        response = await client.generate_text(
-            model=MODEL_NAME,
-            prompt=text
+        # ---------- Вызов Gemini через asyncio.to_thread ----------
+        response = await asyncio.to_thread(
+            client.models.generate_content,
+            MODEL_NAME,
+            text
         )
         answer = response.text.strip()
 
@@ -67,65 +53,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(answer)
 
     except Exception as e:
-        logger.error(f"Gemini ошибка: {e}", exc_info=True)
-        await update.message.reply_text("Ошибка: Gemini временно недоступен. Попробуй позже")
-# Регистрация обработчиков
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("new", clear_chat))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-# Lifespan
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    await application.initialize()
-    await application.start()
-
-    webhook_url = "https://ivanushki-bot.onrender.com/webhook"
-    try:
-        await application.bot.set_webhook(
-            url=webhook_url,
-            secret_token=WEBHOOK_SECRET,
-            drop_pending_updates=True
+        # Показываем реальную ошибку
+        logger.exception("Gemini реальная ошибка")
+        await update.message.reply_text(
+            f"❌ Gemini ошибка:\n{type(e).__name__}: {str(e)[:300]}"
         )
-        logger.info(f"Webhook успешно установлен: {webhook_url}")
-    except Exception as e:
-        logger.error(f"Ошибка установки webhook: {e}")
 
-    yield
+# ---------- Основная функция ----------
+async def main():
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    await application.stop()
-    await application.shutdown()
+    logger.info("Бот запущен в polling режиме")
+    await application.run_polling()
 
-# FastAPI
-app = FastAPI(lifespan=lifespan)
-
-@app.post("/webhook")
-async def webhook(request: Request):
-    logger.info("Получен запрос на /webhook от Telegram")
-
-    if WEBHOOK_SECRET:
-        secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-        if secret != WEBHOOK_SECRET:
-            logger.error(f"Неверный secret token: {secret}")
-            raise HTTPException(status_code=403, detail="Неверный секрет")
-
-    try:
-        json_data = await request.json()
-        logger.info("JSON успешно получен")
-        update = Update.de_json(json_data, application.bot)
-        if update:
-            await application.process_update(update)
-    except Exception as e:
-        logger.error(f"Ошибка обработки обновления: {e}")
-
-    return {"ok": True}
-
-@app.get("/")
-async def root():
-    return {"status": "alive", "message": "Бот на webhook работает"}
-# ✅ Локальный запуск через python main.py
+# ---------- Запуск ----------
 if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    logger.info(f"Запуск сервера на порту {port}")
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    asyncio.run(main())
