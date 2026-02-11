@@ -9,3 +9,4 @@ PyPDF2
 fpdf
 SpeechRecognition
 gTTS
+python-docx
