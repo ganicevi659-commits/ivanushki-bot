@@ -1,11 +1,9 @@
 import os
-import json
-import time
 import logging
+from io import BytesIO
 from dotenv import load_dotenv
 
 from telegram import Update
-from telegram.constants import ChatAction
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -13,200 +11,189 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
+from telegram.constants import ChatAction
 
 from google import genai
 
-# ---------- Логи ----------
+from PIL import Image, ImageDraw, ImageFont
+from docx import Document
+from openpyxl import Workbook
+from pptx import Presentation
+from moviepy.editor import VideoFileClip
+
+# PDF
+import PyPDF2
+from fpdf import FPDF
+
+# Audio
+import speech_recognition as sr
+from gtts import gTTS
+
+# ----------------- SETUP -----------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ---------- ENV ----------
 load_dotenv()
-
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-RATE_LIMIT = int(os.getenv("RATE_LIMIT", 3))
-MAX_WARNINGS = int(os.getenv("MAX_WARNINGS", 3))
-ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 
 if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
-    raise RuntimeError("❌ TELEGRAM_TOKEN и GEMINI_API_KEY обязательны")
+    raise RuntimeError("Нет TELEGRAM_TOKEN или GEMINI_API_KEY")
 
-# ---------- Файлы ----------
-DATA_FILE = "user_data.json"
-BLACKLIST_FILE = "blacklist.json"
-
-user_data = {}
-blacklist = []
-last_message_time = {}
-
-if os.path.exists(DATA_FILE):
-    with open(DATA_FILE, "r", encoding="utf-8") as f:
-        user_data = json.load(f)
-
-if os.path.exists(BLACKLIST_FILE):
-    with open(BLACKLIST_FILE, "r", encoding="utf-8") as f:
-        blacklist = json.load(f)
-
-# ---------- Gemini ----------
 client = genai.Client(api_key=GEMINI_API_KEY)
-MODEL_NAME = "gemini-2.5-flash"
+MODEL = "gemini-2.5-flash"
 
-# ---------- Utils ----------
-def save_user_data():
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(user_data, f, ensure_ascii=False, indent=4)
+os.makedirs("temp", exist_ok=True)
 
-def save_blacklist():
-    with open(BLACKLIST_FILE, "w", encoding="utf-8") as f:
-        json.dump(blacklist, f, ensure_ascii=False, indent=4)
+# ----------------- UTILS -----------------
+def private_only(update: Update) -> bool:
+    return update.effective_chat.type == "private"
 
-def is_blocked(user_id: int) -> bool:
-    return user_id in blacklist
-
-# ---------- Commands ----------
+# ----------------- COMMANDS -----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if is_blocked(user_id):
+    if not private_only(update):
         return
-
-    key = str(user_id)
-    if key not in user_data:
-        user_data[key] = {
-            "name": None,
-            "warnings": 0,
-        }
-        save_user_data()
-        await update.message.reply_text(
-            "👋 Привет! Как тебя зовут?"
-        )
-    else:
-        await update.message.reply_text("С возвращением! Пиши 👇")
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if is_blocked(update.effective_user.id):
-        return
-
     await update.message.reply_text(
-        "💡 Команды:\n"
-        "/start — начать\n"
-        "/help — помощь\n"
-        "/about — о боте\n"
-        "/block <id> — блок (админ)\n"
-        "/unblock <id> — анблок (админ)"
+        "Привет 👋\n"
+        "Я AI-помощник.\n"
+        "Могу работать с текстом, фото, видео, PDF и аудио."
     )
 
-async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if is_blocked(update.effective_user.id):
+# ----------------- TEXT / AI -----------------
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not private_only(update):
         return
 
-    await update.message.reply_text(
-        "🤖 Telegram-бот на Gemini 2.5 Flash\n"
-        "• google-genai SDK\n"
-        "• анти-спам\n"
-        "• blacklist"
+    await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
+
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=update.message.text
     )
 
-# ---------- Blacklist ----------
-async def block_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("❌ Только админ")
+    await update.message.reply_text(response.text or "Пустой ответ")
+
+# ----------------- PHOTO -----------------
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not private_only(update):
         return
 
-    if not context.args:
-        await update.message.reply_text("Использование: /block <user_id>")
+    photo = update.message.photo[-1]
+    file = await photo.get_file()
+    path = "temp/photo.jpg"
+    await file.download_to_drive(path)
+
+    img = Image.open(path).convert("RGB")
+    img = img.resize((img.width // 2, img.height // 2))
+    img = img.convert("L")  # Ч/Б
+
+    draw = ImageDraw.Draw(img)
+    draw.text((10, 10), "AI BOT", fill=255)
+
+    out = "temp/photo_out.jpg"
+    img.save(out)
+
+    await update.message.reply_photo(open(out, "rb"))
+
+# ----------------- VIDEO -----------------
+async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not private_only(update):
         return
 
-    try:
-        uid = int(context.args[0])
-        if uid not in blacklist:
-            blacklist.append(uid)
-            save_blacklist()
-        await update.message.reply_text(f"✅ {uid} заблокирован")
-    except ValueError:
-        await update.message.reply_text("❌ Неверный ID")
+    file = await update.message.video.get_file()
+    path = "temp/video.mp4"
+    await file.download_to_drive(path)
 
-async def unblock_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("❌ Только админ")
+    clip = VideoFileClip(path).subclip(0, min(5, VideoFileClip(path).duration))
+    gif_path = "temp/video.gif"
+    clip.write_gif(gif_path)
+
+    await update.message.reply_animation(open(gif_path, "rb"))
+
+# ----------------- PDF -----------------
+async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not private_only(update):
         return
 
-    if not context.args:
-        await update.message.reply_text("Использование: /unblock <user_id>")
+    file = await update.message.document.get_file()
+    path = "temp/file.pdf"
+    await file.download_to_drive(path)
+
+    # Чтение текста
+    text = ""
+    with open(path, "rb") as f:
+        reader = PyPDF2.PdfReader(f)
+        for page in reader.pages:
+            text += page.extract_text() + "\n"
+
+    if not text.strip():
+        text = "❌ Нечего прочитать из PDF"
+
+    await update.message.reply_text(text[:4000])  # ограничение Telegram
+
+async def create_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not private_only(update):
         return
 
-    try:
-        uid = int(context.args[0])
-        if uid in blacklist:
-            blacklist.remove(uid)
-            save_blacklist()
-        await update.message.reply_text(f"✅ {uid} разблокирован")
-    except ValueError:
-        await update.message.reply_text("❌ Неверный ID")
+    text = update.message.text
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    pdf.multi_cell(0, 10, text)
 
-# ---------- Messages ----------
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if is_blocked(user_id):
+    path = "temp/out.pdf"
+    pdf.output(path)
+
+    await update.message.reply_document(open(path, "rb"))
+
+# ----------------- AUDIO -----------------
+async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not private_only(update):
         return
 
-    text = update.message.text.strip()
-    now = time.time()
+    file = await update.message.voice.get_file() if update.message.voice else await update.message.audio.get_file()
+    path = "temp/audio.ogg"
+    await file.download_to_drive(path)
 
-    # Rate limit
-    if user_id in last_message_time and now - last_message_time[user_id] < RATE_LIMIT:
-        await update.message.reply_text(
-            f"⏱ Подожди {RATE_LIMIT} сек."
-        )
+    # Конвертация через ffmpeg/основной путь в wav (moviepy можно добавить)
+    wav_path = "temp/audio.wav"
+    os.system(f"ffmpeg -y -i {path} {wav_path}")
+
+    r = sr.Recognizer()
+    with sr.AudioFile(wav_path) as source:
+        audio_data = r.record(source)
+        try:
+            text = r.recognize_google(audio_data, language="ru-RU")
+        except:
+            text = "❌ Не удалось распознать аудио"
+
+    await update.message.reply_text(f"📝 Распознано: {text}")
+
+async def audio_tts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not private_only(update):
         return
-    last_message_time[user_id] = now
 
-    key = str(user_id)
+    text = update.message.text
+    tts = gTTS(text=text, lang="ru")
+    path = "temp/tts.mp3"
+    tts.save(path)
 
-    # Имя
-    if key in user_data and user_data[key]["name"] is None:
-        user_data[key]["name"] = text
-        save_user_data()
-        await update.message.reply_text(f"Приятно познакомиться, {text}!")
-        return
+    await update.message.reply_audio(open(path, "rb"))
 
-    prompt = (
-        f"Пользователь {user_data[key]['name']} спрашивает: {text}"
-        if key in user_data else text
-    )
-
-    try:
-        await context.bot.send_chat_action(
-            chat_id=update.effective_chat.id,
-            action=ChatAction.TYPING
-        )
-
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=prompt
-        )
-
-        answer = response.text or "⚠️ Пустой ответ"
-        await update.message.reply_text(answer)
-
-    except Exception as e:
-        logger.exception("Gemini error")
-        await update.message.reply_text(
-            f"❌ Gemini ошибка:\n{type(e).__name__}: {str(e)[:200]}"
-        )
-
-# ---------- Run ----------
+# ----------------- MAIN -----------------
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("about", about_command))
-    app.add_handler(CommandHandler("block", block_command))
-    app.add_handler(CommandHandler("unblock", unblock_command))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(MessageHandler(filters.VIDEO, handle_video))
+    app.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
+    app.add_handler(MessageHandler(filters.AUDIO | filters.VOICE, handle_audio))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^pdf "), create_pdf))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^tts "), audio_tts))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    logger.info("✅ Бот запущен (polling)")
+    logger.info("Бот запущен")
     app.run_polling()
 
 if __name__ == "__main__":
