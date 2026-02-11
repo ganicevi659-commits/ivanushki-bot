@@ -16,7 +16,7 @@ from telegram.constants import ChatAction
 from google import genai
 
 from PIL import Image, ImageDraw, ImageFont
-from docx import Document
+from docx import Document  # Исправлено!
 from openpyxl import Workbook
 from pptx import Presentation
 from moviepy.editor import VideoFileClip
@@ -155,7 +155,7 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     path = "temp/audio.ogg"
     await file.download_to_drive(path)
 
-    # Конвертация через ffmpeg/основной путь в wav (moviepy можно добавить)
+    # Конвертация через ffmpeg
     wav_path = "temp/audio.wav"
     os.system(f"ffmpeg -y -i {path} {wav_path}")
 
