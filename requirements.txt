@@ -1,12 +1,4 @@
 python-dotenv
 python-telegram-bot==20.3
 google-genai
-Pillow
-moviepy
-imageio
-imageio-ffmpeg
-PyPDF2
-fpdf
-SpeechRecognition
-gTTS
-python-docx
+httpx
