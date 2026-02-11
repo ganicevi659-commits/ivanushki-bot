@@ -1,7 +1,11 @@
 python-dotenv
 python-telegram-bot==20.3
 google-genai
-httpx
-
-
-
+Pillow
+moviepy
+imageio
+imageio-ffmpeg
+PyPDF2
+fpdf
+SpeechRecognition
+gTTS
